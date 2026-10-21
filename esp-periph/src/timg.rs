@@ -9,6 +9,10 @@ pub struct TimerGroup {
     ram: RegRam,
     pub t: [Timer; 2],
     pub int_raw: u32, pub int_ena: u32,
+    /// An alarm armed at or behind the counter fires at once instead of waiting for a crossing.
+    /// esp-hal's embassy time driver on the C3 arms a due alarm this way (alarm 0 after a counter
+    /// reset) and relies on it firing.
+    pub fire_due_alarm: bool,
 }
 #[derive(Default, Clone, Copy)]
 pub struct Timer { pub config: u32, pub count: u64, pub latch: u64, pub alarm: u64, pub load: u64, pub prescale_acc: u64 }
@@ -74,7 +78,7 @@ impl Timer {
     }
 }
 impl TimerGroup {
-    pub fn new() -> Self { TimerGroup { ram: RegRam::new(), t: [Timer::default(); 2], int_raw: 0, int_ena: 0 } }
+    pub fn new() -> Self { TimerGroup { ram: RegRam::new(), t: [Timer::default(); 2], int_raw: 0, int_ena: 0, fire_due_alarm: false } }
     pub fn tick(&mut self, apb_ticks: u64) {
         for i in 0..2 {
             self.t[i].step(apb_ticks, (1 << 54) - 1, || self.int_raw |= 1 << i);
@@ -97,6 +101,15 @@ impl TimerGroup {
         let (i, o) = if off < 0x24 { (0usize, off) } else if off < 0x48 { (1usize, off - 0x24) } else { (2, off) };
         if i < 2 {
             self.t[i].write(o, v, (1 << 54) - 1);
+            if self.fire_due_alarm {
+                let t = &mut self.t[i];
+                let armed = t.config & (1 << 31) != 0 && t.config & (1 << 10) != 0;   // EN, ALARM_EN
+                let due = if t.config & (1 << 30) != 0 { t.count >= t.alarm } else { t.count <= t.alarm };
+                if armed && due {
+                    self.int_raw |= 1 << i;
+                    if t.config & (1 << 29) != 0 { t.count = t.load; } else { t.config &= !(1 << 10); }
+                }
+            }
             return;
         }
         match off {
@@ -123,5 +136,36 @@ impl Device for TimerGroup {
             best = Some(best.map_or(apb, |b| b.min(apb)));
         }
         best
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Enable, increase, alarm enable — the order esp-hal's `start` writes them.
+    const RUN: u32 = (1 << 31) | (1 << 30) | (1 << 10);
+
+    #[test]
+    fn a_due_alarm_fires_on_arming_when_enabled() {
+        let mut g = TimerGroup::new();
+        g.fire_due_alarm = true;
+        g.write(0x10, 0);                                  // alarm 0, counter 0: already due
+        g.write(0x0, RUN);
+        assert_eq!(g.int_raw, 1);
+        assert_eq!(g.t[0].config & (1 << 10), 0, "one-shot: ALARM_EN clears");
+        g.write(0x7c, 1);
+        g.write(0x10, 100);                                // a future alarm waits for the crossing
+        g.write(0x0, RUN);
+        assert_eq!(g.int_raw, 0);
+    }
+
+    #[test]
+    fn a_due_alarm_waits_for_a_crossing_by_default() {
+        let mut g = TimerGroup::new();
+        g.write(0x10, 0);
+        g.write(0x0, RUN);
+        g.tick(1 << 20);
+        assert_eq!(g.int_raw, 0);
     }
 }

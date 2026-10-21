@@ -276,7 +276,9 @@ impl Peripherals {
             // checked against the esp32c3 PAC 0.33.0 SVD). IDF enables unit 0 itself; esp-hal
             // relies on the reset value.
             systimer: { let mut s = Systimer::new(); s.conf = 0x4600_0000; s },
-            timg: [TimerGroup::new(), TimerGroup::new()], gpio: { let mut g = Gpio::new(); g.func_out_sel.fill(128); g.input_select = esp_soc::pins::ChipPins::C3.input_select; g }, rtc: RtcCntl::new_c3(), ledc: Ledc::new(LedcLayout::C3),
+            // An alarm armed already due fires at once: esp-hal's embassy time driver arms one
+            // (alarm 0 after a counter reset) and works on silicon. Not yet compared with silicon here.
+            timg: [(), ()].map(|_| { let mut t = TimerGroup::new(); t.fire_due_alarm = true; t }), gpio: { let mut g = Gpio::new(); g.func_out_sel.fill(128); g.input_select = esp_soc::pins::ChipPins::C3.input_select; g }, rtc: RtcCntl::new_c3(), ledc: Ledc::new(LedcLayout::C3),
             efuse: efuse_c3(mac, 0, 4, 3), system: {
                 let mut s = SystemRegs::new(0x28);
                 // IDF v5.5.5 soc/esp32c3/register/soc/system_reg.h:
