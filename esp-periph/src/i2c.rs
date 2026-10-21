@@ -105,8 +105,13 @@ impl I2c<$n> {
 
     pub fn read(&mut self, off: u32) -> u32 {
         match off {
-            // IDF v5.5.4 S3 i2c_reg.h:173-179: BUS_BUSY bit 4.
-            0x08 => (self.nack as u32) | ((self.is_active() as u32) << 4) | (u32::from($n == 16 && self.int_raw & INT_TIMEOUT != 0) << 2) | ((self.rx.len() as u32 & 0x3f) << 8) | ((self.tx.len() as u32 & 0x3f) << 18),   // SR: resp_rec, bus_busy, rxfifo_cnt, txfifo_cnt
+            // IDF v5.5.4 S3 i2c_reg.h:173-179: BUS_BUSY bit 4. RESP_REC (bit 0) is set while the slave
+            // has acknowledged: esp-hal's blocking driver (1.0.0-rc.0, `check_errors`, every chip but
+            // the classic ESP32) reports a data NACK when TRANS_COMPLETE is set and RESP_REC is
+            // clear, and its transfers succeed on silicon. The model had it inverted, so every
+            // esp-hal transaction whose completion the driver looked at failed. The classic
+            // controller keeps its old value: nothing reads it there.
+            0x08 => (if $n == 16 { self.nack } else { !self.nack } as u32) | ((self.is_active() as u32) << 4) | (u32::from($n == 16 && self.int_raw & INT_TIMEOUT != 0) << 2) | ((self.rx.len() as u32 & 0x3f) << 8) | ((self.tx.len() as u32 & 0x3f) << 18),   // SR: resp_rec, bus_busy, rxfifo_cnt, txfifo_cnt
             0x14 => ((self.rx.len() as u32 & 0x1f) << 5) | ((self.tx.len() as u32 & 0x1f) << 15),                        // FIFO_ST: waddr = count, raddr = 0
             0x1c => self.rx.pop_front().unwrap_or(0) as u32,
             0x20 => self.int_raw,
