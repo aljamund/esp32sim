@@ -270,7 +270,12 @@ impl Peripherals {
             i2c: Box::new(I2c::new()), spi2: Box::new(GpSpi::new()), rmt: Box::new(RmtCompact::new(CPU_HZ)), io_mux: RegRam::new(),
             adc: esp_periph::sar_adc::SarAdc::new(false, CPU_HZ),
             wifi: Default::default(), fe_iq: Default::default(), i2c_mst: Default::default(),
-            uart: [Uart::new(UartLayout::C3), Uart::new(UartLayout::C3)], usb: UsbSerialJtag::new(CPU_HZ), systimer: Systimer::new(),
+            uart: [Uart::new(UartLayout::C3), Uart::new(UartLayout::C3)], usb: UsbSerialJtag::new(CPU_HZ),
+            // SYSTIMER_CONF resets to 0x4600_0000: TIMER_UNIT0_WORK_EN (bit 30) and unit 1's two
+            // core-stall enables (bits 26, 25) set (IDF v5.5.4 components/soc/esp32c3/register/soc/systimer_reg.h,
+            // checked against the esp32c3 PAC 0.33.0 SVD). IDF enables unit 0 itself; esp-hal
+            // relies on the reset value.
+            systimer: { let mut s = Systimer::new(); s.conf = 0x4600_0000; s },
             timg: [TimerGroup::new(), TimerGroup::new()], gpio: { let mut g = Gpio::new(); g.func_out_sel.fill(128); g.input_select = esp_soc::pins::ChipPins::C3.input_select; g }, rtc: RtcCntl::new_c3(), ledc: Ledc::new(LedcLayout::C3),
             efuse: efuse_c3(mac, 0, 4, 3), system: {
                 let mut s = SystemRegs::new(0x28);
@@ -444,6 +449,17 @@ mod tests {
         for addr in [0x6001_3028, 0x6002_4034, 0x6001_6040] { p.write32(addr, 0); }
         assert!(p.refresh_lines());
         assert_eq!(p.last_status[0], 0);
+    }
+
+    /// Unit 0 counts from reset: firmware that never writes SYSTIMER_CONF (esp-hal) sees time pass.
+    #[test]
+    fn systimer_unit0_counts_from_reset() {
+        let mut p = Peripherals::new([0; 6]);
+        assert_eq!(p.read32(0x6002_3000), 0x4600_0000);
+        p.tick(CPU_HZ / 1000);                                          // 1 ms
+        p.write32(0x6002_3004, 1 << 30);                               // UNIT0_OP: update
+        let lo = p.read32(0x6002_3044);
+        assert!((15_000..=16_000).contains(&lo), "16 MHz unit 0 after 1 ms, got {lo}");
     }
 
     /// INTR_STATUS_0/1 report the asserted sources; the map registers end before them.
