@@ -146,8 +146,59 @@ impl SocBus {
         // read returns zeros — which is exactly how `E memspi: no response` showed up on a
         // non-power-on boot while a power-on boot happened to survive it.
         if self.periph.spi_exec { self.run_spi(); }
-        if a == 0x6002_4000 && self.periph.spi2.has_pending_transfer() { self.deliver_spi2_transfer(); }
+        // SPI2 (0x6002_4000) or GDMA (0x6003_f000): either can be the last write before a DMA
+        // data phase can run, as drivers start the out link before or after CMD.USR.
+        if matches!(a & !0xfff, 0x6002_4000 | 0x6003_f000) && self.periph.spi2.has_pending_transfer() {
+            if self.periph.spi2.dma_tx_pending.is_some() { self.spi2_dma_step(); }
+            self.deliver_spi2_transfer();
+        }
         self.irq_dirty = true;
+    }
+
+    /// Supply a GP-SPI2 MOSI data phase from the GDMA out channel bound to it.
+    /// SPI2 is GDMA peripheral 0 (IDF v5.5.4 components/soc/esp32c3/include/soc/gdma_channel.h;
+    /// PERI_OUT_SEL in the esp32c3 PAC 0.33.0 SVD). Descriptor fields: components/hal/include/hal/dma_types.h.
+    /// OUT_AUTO_WRBACK is OUT_CONF0 bit 2. Interrupt bits are the shared layout: 0 OUT_DONE,
+    /// 1 OUT_EOF, 2 OUT_DSCR_ERR, 3 OUT_TOTAL_EOF. The data phase completes at once, without wire time.
+    #[cold]
+    #[inline(never)]
+    fn spi2_dma_step(&mut self) {
+        let Some(bits) = self.periph.spi2.dma_tx_pending else { return };
+        let Some(ch) = self.periph.gdma.state.out_channel_for(0) else { return };
+        let wanted = bits.div_ceil(8) as usize;
+        let mut payload = Vec::with_capacity(wanted);
+        let mut c = self.periph.gdma.state.out[ch];
+        let mut fault = false;
+        for _ in 0..1024 {
+            if payload.len() >= wanted || !c.running || c.desc == 0 { break; }
+            let d = esp_periph::gdma::read_desc(&|addr| self.sram32(addr), c.desc);
+            if !d.owner_dma && c.conf1 & (1 << 12) != 0 { fault = true; break; }   // OUT_CHECK_OWNER (OUT_CONF1 bit 12, default 0)
+            let remaining = d.length.saturating_sub(c.buf_pos) as usize;
+            let count = remaining.min(wanted - payload.len());
+            match self.sram_bytes(d.buf.wrapping_add(c.buf_pos), count) {
+                Some(bytes) => payload.extend_from_slice(bytes),
+                None => { fault = true; break; }
+            }
+            c.buf_pos += remaining as u32;                               // GDMA drains the descriptor
+            if c.conf0 & (1 << 2) != 0 {
+                let dw0 = self.sram32(d.addr) & !(1 << 31);
+                self.sram_store(d.addr, &dw0.to_le_bytes());
+            }
+            c.int_raw |= 1 << 0;
+            if d.eof { c.int_raw |= 1 << 1; c.eof_desc = d.addr; }
+            if d.next == 0 { c.running = false; c.desc = 0; c.int_raw |= 1 << 3; } else { c.desc = d.next; c.buf_pos = 0; }
+            if d.eof { break; }
+        }
+        if fault || payload.len() != wanted {
+            if self.periph.spi2.log { eprintln!("[spi2] DMA descriptor fault at {:#x} ({} of {} bytes)", c.desc, payload.len(), wanted); }
+            let g = &mut self.periph.gdma.state.out[ch];
+            g.running = false;
+            g.int_raw |= 1 << 2;
+            self.periph.spi2.fail_dma_tx();
+            return;
+        }
+        self.periph.gdma.state.out[ch] = c;
+        self.periph.spi2.complete_dma_tx(&payload);
     }
 
     #[inline(always)]
