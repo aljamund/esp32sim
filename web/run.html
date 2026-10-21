@@ -239,6 +239,7 @@ function drawFrame(buf) {
   const dv = new DataView(buf); const w = dv.getUint16(1, true), h = dv.getUint16(3, true);
   if (w > 160 || (boardName && boardName !== 'atech14')) {   // a panel, not the Atech TFT
     const c = $('#lcd'); if (c.style.display === 'none') { c.style.display = ''; $('#lcdstat').textContent = PANEL_TEXT[boardName] || $('#lcdstat').textContent; }   // the first frame: the firmware drives it after all
+    const panel = $('#lcdpanel'); if (panel.style.display === 'none') { panel.style.display = ''; $('#lcdstat').textContent = PANEL_TEXT[boardName] || `${w}×${h} panel — click/drag to touch`; }   // a board this page has no entry for: show what it draws
     if (lcdRaw.width !== w || lcdRaw.height !== h) { lcdRaw.width = w; lcdRaw.height = h; }
     const rctx = lcdRaw.getContext('2d'); const im = rctx.createImageData(w, h); const d = im.data;
     for (let i = 0; i < w * h; i++) { const p = dv.getUint16(5 + i * 2, true); d[i*4] = (p >> 11) * 255 / 31; d[i*4+1] = ((p >> 5) & 63) * 255 / 63; d[i*4+2] = (p & 31) * 255 / 31; d[i*4+3] = 255; }
