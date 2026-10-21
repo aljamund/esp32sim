@@ -45,6 +45,8 @@ pub mod src {
 pub struct Intc {
     pub map: [u32; src::COUNT],
     pub lines: esp_periph::intmtx::Lines,
+    /// asserted sources at the last refresh, for INTR_STATUS_0/1
+    pub status: [u32; 2],
     ram: RegRam,
 }
 
@@ -52,12 +54,23 @@ impl Default for Intc { fn default() -> Self { Self::new() } }
 
 impl Intc {
     pub fn new() -> Self {
-        Intc { map: [0; src::COUNT], lines: Default::default(), ram: RegRam::new() }
+        Intc { map: [0; src::COUNT], lines: Default::default(), status: [0; 2], ram: RegRam::new() }
+    }
+
+    /// Re-derive the CPU lines from the asserted sources.
+    fn update(&mut self, st: &[u32; 4]) {
+        self.status = [st[0], st[1]];
+        self.lines.update(&self.map, st);
     }
 
     pub fn read(&self, off: u32) -> u32 {
         match off {
-            0x000..=0x0f8 => self.map.get((off / 4) as usize).copied().unwrap_or(0),
+            0x000..=0x0f4 => self.map.get((off / 4) as usize).copied().unwrap_or(0),
+            // INTERRUPT_CORE0_INTR_STATUS_0/1_REG after the 62 map registers: IDF v5.5.4
+            // components/soc/esp32c3/register/soc/interrupt_core0_reg.h (offsets checked against
+            // the esp32c3 PAC 0.33.0 SVD). esp-hal's trap handler reads them to pick the
+            // peripheral handlers to run; without them it returns with the line still asserted.
+            0x0f8 => self.status[0], 0x0fc => self.status[1],
             0x104 => self.lines.enable,
             0x108 => self.lines.int_type,
             0x110 => self.lines.level | self.lines.edge_pending,     // EIP_STATUS: raw source state
@@ -387,7 +400,7 @@ impl Peripherals {
         st[0] |= self.wifi_irq as u32;
         let changed = st != self.last_status;
         self.last_status = st;
-        self.intc.lines.update(&self.intc.map, &st);
+        self.intc.update(&st);
         changed
     }
 
@@ -396,7 +409,7 @@ impl Peripherals {
         let st = self.source_status();
         let changed = st != self.last_status;
         self.last_status = st;
-        self.intc.lines.update(&self.intc.map, &st);
+        self.intc.update(&st);
         changed
     }
 }
@@ -431,6 +444,22 @@ mod tests {
         for addr in [0x6001_3028, 0x6002_4034, 0x6001_6040] { p.write32(addr, 0); }
         assert!(p.refresh_lines());
         assert_eq!(p.last_status[0], 0);
+    }
+
+    /// INTR_STATUS_0/1 report the asserted sources; the map registers end before them.
+    #[test]
+    fn interrupt_status_registers_report_asserted_sources() {
+        let mut p = Peripherals::new([0; 6]);
+        p.write32(0x600c_2000 + 4 * src::TG0_T0 as u32, 7);          // TG0_T0 -> CPU line 7
+        p.write32(0x6001_f070, 1);                                    // TIMG0 INT_ENA T0
+        p.timg[0].int_raw = 1;
+        p.refresh_lines();
+        assert_eq!(p.read32(0x600c_20f8), 0, "no source below 32 asserted");
+        assert_eq!(p.read32(0x600c_20fc), 1 << (src::TG0_T0 - 32));
+        assert_eq!(p.read32(0x600c_2000 + 4 * src::TG0_T0 as u32), 7, "the map register is unchanged");
+        p.write32(0x6001_f07c, 1);                                    // TIMG0 INT_CLR T0
+        p.refresh_lines();
+        assert_eq!(p.read32(0x600c_20fc), 0);
     }
 
     #[test]
