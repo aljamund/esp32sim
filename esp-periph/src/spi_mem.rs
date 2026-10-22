@@ -182,6 +182,15 @@ impl SpiMem {
             let erase_addr = if has_mosi && addr_bits < 24 {
                 self.w_bytes(((24 - addr_bits) / 8) as usize).iter().fold(addr, |a, &b| (a << 8) | u32::from(b))
             } else { addr };
+            // No command phase, an address and data in: a read with the flash already in
+            // continuous (XIP) read mode, which takes the address straight away. The ROM's
+            // `esp_rom_spiflash_read` reads this way on the C3 (USER 0x700000c0: no USR_COMMAND;
+            // USER2 holds the DIO read 0xbb that put the chip in that mode).
+            if user & (1 << 31) == 0 && has_addr && has_miso {
+                let d = rd(addr, miso_bytes);
+                self.set_w_bytes(&d);
+                return;
+            }
             match c {
                 0x03 | 0x0b | 0x3b | 0x6b | 0xbb | 0xeb => { let d = rd(addr, miso_bytes); self.set_w_bytes(&d); }
                 0x9f => { let j = self.jedec; self.set_w_bytes(&j); }
