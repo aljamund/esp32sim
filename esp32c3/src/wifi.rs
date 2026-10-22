@@ -46,6 +46,22 @@ impl WifiMac {
             link: Default::default(),
         }
     }
+    /// SYSCON `WIFI_RST_EN` (+0x018) `MAC_RST`, bit 2 (`SYSTEM_WIFIMAC_RST`; IDF v5.5.4 soc/esp32c3/register/soc/syscon_reg.h;
+    /// esp-radio `reset_wifi_mac`, called by the blob's `wifi_reset_mac` on every driver init).
+    /// The hardware forgets its place in the receive ring and its transmit work; the driver then
+    /// writes a new ring base, which must take effect even though a ring was in use before.
+    /// Without this a restarted driver (esp-radio drops and re-creates the controller) never sees
+    /// another frame: they go into the old, freed ring.
+    pub fn reset_mac(&mut self) {
+        self.rx_base = 0;
+        self.rx_next = 0;
+        self.rx_last = 0;
+        self.events = 0;
+        self.txq_complete = 0;
+        self.txq_error = 0;
+        self.tx_pending.clear();
+        self.link.rx_reset();
+    }
     pub fn irq(&self) -> bool {
         self.events != 0 || self.pwr_events != 0
     }
