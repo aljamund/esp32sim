@@ -616,6 +616,8 @@ impl StationLink {
     pub fn rx_delivered(&mut self, desc: u32) { self.last_rx_desc = desc; self.rx_frames += 1; }
     /// A frame found no usable descriptor.
     pub fn drop_rx(&mut self) { self.rx_dropped += 1; }
+    /// The MAC was reset: the receive ring it filled is gone.
+    pub fn rx_reset(&mut self) { self.last_rx_desc = 0; }
 
     /// The network behind the access point answers what the station sent at once and reads the
     /// host's sockets every `NET_POLL_US`. Nothing to do in relay mode: the host has the frames.
