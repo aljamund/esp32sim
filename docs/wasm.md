@@ -65,9 +65,11 @@ uses and fails on a panic or a missing console line; CI runs it after the golden
 
 Every chip is in the one module: `esp32sim_new` takes a board name, and `esp32c3` or `esp32c6`
 builds the RISC-V machine instead of the Xtensa one; `esp32` or a classic board name such as
-`ttgo-tdisplay` builds the classic ESP32. The C3 has no `WebServer` of its own — it is
-console-only — so the wasm layer turns its console into the same `{"t":"serial"}` messages the
-S3 sends, and `esp32sim_cpu_hz` tells the worker which clock to pace against (240 MHz vs 160).
+`ttgo-tdisplay` builds the classic ESP32. A C3 board registered in `esp32c3::board` (the names
+esp32sim-c3 takes as `--board`) builds the C3 with that board, so its display and touch reach the
+page like the S3's. The C3 has no `WebServer` of its own, so the wasm layer turns its console into
+the same `{"t":"serial"}` messages the S3 sends, and `esp32sim_cpu_hz` tells the worker which
+clock to pace against (240 MHz vs 160).
 
 ```
 web/run.html     the UI, unchanged; `link` is either a WebSocket or the worker
