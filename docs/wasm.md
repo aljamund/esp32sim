@@ -69,8 +69,9 @@ builds the RISC-V machine instead of the Xtensa one; `esp32` or a classic board 
 ESP32-S31, the Mosaico with its flash, PSRAM and eFuse as the CLI's `--board mosaico` sets them.
 `esp32sim_set_imu_motion(emu, mode)` before the first instruction selects a board's scripted IMU
 motion (`waveshare-amoled18-v2`, `mosaico`), as `--imu-motion` does; a manifest asks for it with
-`imu_motion`. The C3 has no `WebServer` of its own — it is
-console-only — so the wasm layer turns its console into the same `{"t":"serial"}` messages the
+`imu_motion`. A C3 board registered in `esp32c3::board` (the names
+esp32sim-c3 takes as `--board`) builds the C3 with that board, so its display and touch reach the
+page like the S3's. The C3 has no `WebServer` of its own, so the wasm layer turns its console into the same `{"t":"serial"}` messages the
 S3 sends, and `esp32sim_cpu_hz` tells the worker which clock to pace against (240 MHz vs 160).
 
 ```
