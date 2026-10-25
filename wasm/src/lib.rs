@@ -94,8 +94,8 @@ unsafe fn text<'a>(ptr: *const u8, len: usize) -> &'a str {
 /// `board` is a CLI board name (atech14, waveshare-cam, waveshare-lcd4b,
 /// waveshare-amoled18-v2, none) for the ESP32-S3, `esp32` (the bare esp32dev module) or a classic
 /// board such as `ttgo-tdisplay` for the classic ESP32, `esp32c6` or `waveshare-c6-lcd147` for the
-/// C6, `esp32c3` for the C3 or `esp32p4` for the P4 (rev < 3), which are console-only and take no
-/// board. Null on failure.
+/// C6, `esp32c3` (the bare C3) or a C3 board named like esp32sim-c3's `--board` for the C3, or
+/// `esp32p4` for the P4 (rev < 3), which is console-only and takes no board. Null on failure.
 /// Flash and PSRAM are each limited to 32 MiB, matching the browser configuration form.
 ///
 /// # Safety
@@ -127,6 +127,14 @@ pub unsafe extern "C" fn esp32sim_new(board: *const u8, board_len: usize, flash_
     } else {
         esp32::board::make_board(&board)
     };
+    // C3 boards (`--board` names of esp32sim-c3); `esp32c3`/`c3` is the bare chip.
+    let c3_board = if matches!(board.as_str(), "esp32c3" | "c3") {
+        esp32c3::board::make_board("none")
+    } else if classic_board.is_some() || c6_board.is_some() || matches!(board.as_str(), "none" | "bare") {
+        None
+    } else {
+        esp32c3::board::make_board(&board)
+    };
     let m = if let Some(b) = classic_board {
         let mut m = esp32::machine([0x24, 0x6f, 0x28, 0, 0x11, 0x22], flash_bytes);
         m.bus.board = b;
@@ -135,8 +143,10 @@ pub unsafe extern "C" fn esp32sim_new(board: *const u8, board_len: usize, flash_
         m.console.mask = 2;
         prepare(&mut m);
         MachineKind::Esp32(Box::new(m))
-    } else if board == "esp32c3" || board == "c3" {
+    } else if let Some(b) = c3_board {
         let mut m = esp32c3::machine([0x3c, 0x84, 0x27, 0xb6, 0xa7, 0x1c], flash_bytes);
+        m.bus.board = b;
+        m.bus.attach_board_devices();
         m.bus.set_flash_size(flash_bytes);
         m.console.mask = 2;                                  // the ROM mirrors its console to UART0 and USB-Serial/JTAG
         prepare(&mut m);

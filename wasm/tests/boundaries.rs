@@ -78,6 +78,18 @@ fn board_aliases_route_to_the_canonical_chip() {
 }
 
 #[test]
+fn c3_board_names_go_through_the_c3_board_factory() {
+    for (board, ok) in [("esp32c3", true), ("c3", true), ("no-such-board", false)] {
+        // SAFETY: The name is readable and the handle is uniquely owned until deletion.
+        unsafe {
+            let e = esp32sim_new(board.as_ptr(), board.len(), 4, 0);
+            assert_eq!(!e.is_null(), ok, "{board}");
+            if ok { assert_eq!(esp32sim_cpu_hz(e), 160e6, "{board}"); esp32sim_delete(e); }
+        }
+    }
+}
+
+#[test]
 fn complete_stub_specs_and_wifi_report_invalid_configuration() {
     // SAFETY: every buffer is live for its call and handles are exclusively owned here.
     unsafe {
